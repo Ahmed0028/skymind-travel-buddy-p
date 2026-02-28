@@ -1,0 +1,62 @@
+# Cloud Build CI/CD pipeline
+# Builds the container image, pushes it to Artifact Registry,
+# and deploys it to Cloud Run.
+#
+# Required substitutions (set in Cloud Build trigger or --substitutions flag):
+#   _REGION          - GCP region (e.g. us-central1)
+#   _REPOSITORY      - Artifact Registry repository name (e.g. travel-buddy)
+#   _SERVICE_NAME    - Cloud Run service name (e.g. lufthansa-travel-buddy)
+#
+# Required Cloud Build service-account permissions:
+#   - roles/run.admin
+#   - roles/iam.serviceAccountUser
+#   - roles/artifactregistry.writer
+
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: travel-buddy
+  _SERVICE_NAME: lufthansa-travel-buddy
+
+steps:
+  # Step 1: Build the Docker image
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest
+      - lufthansa-travel-buddy
+
+  # Step 2: Push the image to Artifact Registry
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}
+
+  # Step 3: Deploy to Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=1Gi
+      - --cpu=1
+      - --min-instances=0
+      - --max-instances=10
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=${_REGION},GOOGLE_GENAI_USE_VERTEXAI=1
+      - --update-secrets=GOOGLE_API_KEY=google-api-key:latest,AVIATIONSTACK_API_KEY=aviationstack-api-key:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE_NAME}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
